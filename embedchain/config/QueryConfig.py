@@ -62,6 +62,7 @@ class QueryConfig(BaseConfig):
         top_p=None,
         history=None,
         stream: bool = False,
+        citations: bool = False,
     ):
         """
         Initializes the QueryConfig instance.
@@ -118,6 +119,8 @@ class QueryConfig(BaseConfig):
         if not isinstance(stream, bool):
             raise ValueError("`stream` should be bool")
         self.stream = stream
+
+        self.citations = citations
 
     def validate_template(self, template: Template):
         """

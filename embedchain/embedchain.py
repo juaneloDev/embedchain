@@ -155,23 +155,24 @@ class EmbedChain:
         :return: The content of the document that matched your query.
         """
         try:
-            where = {"app_id": self.config.id} if self.config.id is not None else {}  # optional filter
+            where = {"app_id": self.config.id} if self.config.id is not None else {}
             result = self.collection.query(
-                query_texts=[
-                    input_query,
-                ],
+                query_texts=[input_query],
                 n_results=config.number_documents,
                 where=where,
             )
         except InvalidDimensionException as e:
             raise InvalidDimensionException(
-                e.message()
-                + ". This is commonly a side-effect when an embedding function, different from the one used to add the embeddings, is used to retrieve an embedding from the database."  # noqa E501
+                e.message() + ". This is commonly a side-effect when an embedding function, different from the one used to add the embeddings, is used to retrieve an embedding from the database."
             ) from None
 
         results_formatted = self._format_result(result)
-        contents = [result[0].page_content for result in results_formatted]
+        if config.citations:
+            contents = [{'content': result[0].page_content, 'title': result[0].metadata['title'], 'url': result[0].metadata['url']} for result in results_formatted]
+        else:
+            contents = [{'content': result[0].page_content} for result in results_formatted]
         return contents
+
 
     def _append_search_and_context(self, context, web_search_result):
         return f"{context}\nWeb Search Result: {web_search_result}"
@@ -187,7 +188,7 @@ class EmbedChain:
         configuration options.
         :return: The prompt
         """
-        context_string = (" | ").join(contexts)
+        context_string = (" | ").join([context['content'] for context in contexts])
         web_search_result = kwargs.get("web_search_result", "")
         if web_search_result:
             context_string = self._append_search_and_context(context_string, web_search_result)
@@ -289,7 +290,7 @@ class EmbedChain:
         k = {}
         if self.online:
             k["web_search_result"] = self.access_search_and_get_results(input_query)
-        contexts = self.retrieve_from_database(input_query, config)
+        contexts = self.retrieve_from_database(input_query, config, **k)
 
         global memory
         chat_history = memory.load_memory_variables({})["history"]
@@ -307,12 +308,18 @@ class EmbedChain:
 
         memory.chat_memory.add_user_message(input_query)
 
+        def append_to_generator(generator, text):
+            yield from generator
+            yield text
+
         if isinstance(answer, str):
             memory.chat_memory.add_ai_message(answer)
             logging.info(f"Answer: {answer}")
             return answer
         else:
-            # this is a streamed response and needs to be handled differently.
+            citation_strings = [' | '.join([context['title'], context['url'], " <EOS> "]) for context in contexts]
+            citation_string = ' ||| ' + ' | '.join(citation_strings)
+            answer = append_to_generator(answer, citation_string)
             return self._stream_chat_response(answer)
 
     def _stream_chat_response(self, answer):
